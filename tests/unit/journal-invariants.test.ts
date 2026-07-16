@@ -39,6 +39,7 @@ beforeEach(async () => {
   
   const [fiscalYear] = await db.insert(schema.fiscalYears).values({
     companyId: companyId,
+    name: '2024',
     startDate: '2024-01-01',
     endDate: '2024-12-31',
     isClosed: false,
@@ -48,6 +49,8 @@ beforeEach(async () => {
   
   const [period] = await db.insert(schema.accountingPeriods).values({
     fiscalYearId: fiscalYear.id,
+    companyId: companyId,
+    name: '2024-01',
     startDate: '2024-01-01',
     endDate: '2024-12-31',
     isClosed: false,
@@ -59,13 +62,13 @@ beforeEach(async () => {
     class: 'asset',
     name: 'Asset',
     normalBalance: 'debit',
-  });
+  }).returning();
   
   const [equityType] = await db.insert(schema.accountTypes).values({
     class: 'equity',
     name: 'Equity',
     normalBalance: 'credit',
-  });
+  }).returning();
   
   const [assetAccount] = await db.insert(schema.accounts).values({
     companyId: companyId,
@@ -73,7 +76,7 @@ beforeEach(async () => {
     code: '1000',
     name: 'Cash',
     isActive: true,
-  });
+  }).returning();
   
   accountId = assetAccount.id;
   
@@ -81,7 +84,7 @@ beforeEach(async () => {
     companyId: companyId,
     code: 'JE',
     name: 'Journal Entries',
-  });
+  }).returning();
   
   journalId = journal.id;
 });
@@ -238,6 +241,8 @@ describe('Journal Entry Invariants', () => {
   it('should reject operations on closed accounting periods', async () => {
     const [closedPeriod] = await db.insert(schema.accountingPeriods).values({
       fiscalYearId: fiscalYearId,
+      companyId: companyId,
+      name: '2024-01-closed',
       startDate: '2024-01-01',
       endDate: '2024-12-31',
       isClosed: true,

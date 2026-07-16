@@ -10,6 +10,7 @@ function createTestCaller() {
     db: getDb(),
     userId: null,
     companyId: null,
+    setRLSContext: async () => {},
   });
 }
 
@@ -27,7 +28,8 @@ describe('tRPC Integration Tests', () => {
     it('should list accounts', async () => {
       const result = await caller.accounts.list({ page: 1, pageSize: 10 });
       expect(result.accounts).toBeDefined();
-      expect(typeof result.pagination).toBe('object');
+      expect(typeof result.page).toBe('number');
+      expect(typeof result.totalPages).toBe('number');
     });
   });
 
