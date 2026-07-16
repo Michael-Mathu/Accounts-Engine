@@ -5,42 +5,11 @@ import { Plus, Search, ChevronDown, ChevronRight, Eye, Edit, Archive, Download, 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { trpc } from '@/lib/trpc';
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
-
-interface Subscription {
-  id: string;
-  plan: 'self_hosted' | 'monthly' | 'quarterly' | 'annual';
-  status: 'active' | 'canceled' | 'past_due' | 'incomplete' | 'expired';
-  stripeCustomerId: string | null;
-  currentPeriodStart: string | null;
-  currentPeriodEnd: string | null;
-}
-
-interface CreditBalance {
-  creditsRemaining: number;
-  transactions: { id: string; amount: number; reason: string; description: string; createdAt: string }[];
-}
-
-const mockSubscription: Subscription = {
-  id: 'sub_1',
-  plan: 'monthly',
-  status: 'active',
-  stripeCustomerId: 'cus_abc123',
-  currentPeriodStart: '2024-03-01',
-  currentPeriodEnd: '2024-04-01',
-};
-
-const mockCreditBalance = 250;
-const mockCreditTransactions = [
-  { id: '1', amount: 1000, reason: 'purchase', description: 'Purchased 1000 credits', createdAt: '2024-01-15' },
-  { id: '2', amount: -50, reason: 'receipt_ocr', description: 'Receipt OCR extraction', createdAt: '2024-01-20' },
-  { id: '3', amount: -25, reason: 'bank_sync', description: 'Bank sync', createdAt: '2024-01-22' },
-  { id: '4', amount: -10, reason: 'ai_report', description: 'AI report generation', createdAt: '2024-01-25' },
-];
 
 const featureGates = [
   { key: 'plaid_relay', label: 'Plaid Bank Sync', icon: Globe, description: 'Automatic bank transaction import via Plaid' },
@@ -52,6 +21,15 @@ const featureGates = [
 
 export default function BillingPage() {
   const [activeTab, setActiveTab] = useState<'subscription' | 'credits' | 'features'>('subscription');
+  const utils = trpc.useUtils();
+
+  const subscriptionQuery = trpc.billing.getSubscription.useQuery();
+  const creditQuery = trpc.billing.getCreditBalance.useQuery();
+  const featureGatesQuery = trpc.billing.getFeatureGates.useQuery();
+
+  const subscription = subscriptionQuery.data;
+  const creditData = creditQuery.data;
+  const featureGatesData = featureGatesQuery.data;
 
   return (
     <DashboardLayout>
@@ -83,41 +61,35 @@ export default function BillingPage() {
                   <CardTitle>Current Plan</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className={`p-4 rounded-lg border ${mockSubscription.status === 'active' ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Status</p>
-                        <p className={`font-semibold ${mockSubscription.status === 'active' ? 'text-green-700' : 'text-gray-700'}`}>
-                          {mockSubscription.status.charAt(0).toUpperCase() + mockSubscription.status.slice(1)}
-                        </p>
+                  {subscriptionQuery.isLoading ? (
+                    <p>Loading...</p>
+                  ) : subscription ? (
+                    <div className={`p-4 rounded-lg border ${subscription.status === 'active' ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Status</p>
+                          <p className={`font-semibold ${subscription.status === 'active' ? 'text-green-700' : 'text-gray-700'}`}>
+                            {subscription.status.charAt(0).toUpperCase() + subscription.status.slice(1)}
+                          </p>
+                        </div>
+                        <Badge variant={subscription.status === 'active' ? 'default' : 'secondary'}>
+                          {subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)}
+                        </Badge>
                       </div>
-                      <Badge variant={mockSubscription.status === 'active' ? 'default' : 'secondary'}>
-                        {mockSubscription.plan.charAt(0).toUpperCase() + mockSubscription.plan.slice(1)}
-                      </Badge>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-muted-foreground">Period Start</p>
+                          <p>{subscription.currentPeriodStart ? formatDate(subscription.currentPeriodStart) : 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Period End</p>
+                          <p>{subscription.currentPeriodEnd ? formatDate(subscription.currentPeriodEnd) : 'N/A'}</p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Period Start</p>
-                        <p>{mockSubscription.currentPeriodStart ? formatDate(mockSubscription.currentPeriodStart) : 'N/A'}</p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Period End</p>
-                        <p>{mockSubscription.currentPeriodEnd ? formatDate(mockSubscription.currentPeriodEnd) : 'N/A'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Button className="w-full" asChild>
-                      <a href="/dashboard/billing/portal">Manage Subscription</a>
-                    </Button>
-                    <Button variant="outline" className="w-full" asChild>
-                      <a href="/dashboard/billing/checkout?plan=quarterly">Upgrade to Quarterly (Save 10%)</a>
-                    </Button>
-                    <Button variant="outline" className="w-full" asChild>
-                      <a href="/dashboard/billing/checkout?plan=annual">Upgrade to Annual (Save 20%)</a>
-                    </Button>
-                  </div>
+                  ) : (
+                    <p>No subscription found</p>
+                  )}
                 </CardContent>
               </Card>
 
@@ -162,13 +134,19 @@ export default function BillingPage() {
                   <CardTitle>Credit Balance</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-center py-8">
-                    <div className="text-5xl font-bold text-primary mb-2">{mockCreditBalance}</div>
-                    <div className="text-muted-foreground">Credits Remaining</div>
-                    <Button className="mt-4" asChild>
-                      <a href="/dashboard/billing/purchase-credits">Purchase Credits</a>
-                    </Button>
-                  </div>
+                  {creditQuery.isLoading ? (
+                    <p>Loading...</p>
+                  ) : creditData ? (
+                    <div className="text-center py-8">
+                      <div className="text-5xl font-bold text-primary mb-2">{creditData.balance}</div>
+                      <div className="text-muted-foreground">Credits Remaining</div>
+                      <Button className="mt-4" asChild>
+                        <a href="/dashboard/billing/purchase-credits">Purchase Credits</a>
+                      </Button>
+                    </div>
+                  ) : (
+                    <p>No credit data</p>
+                  )}
                 </CardContent>
               </Card>
 
@@ -180,30 +158,34 @@ export default function BillingPage() {
                   </Button>
                 </CardHeader>
                 <CardContent>
-                  <div className="rounded-md border">
-                    <div className="grid grid-cols-[120px_1fr_100px_100px_120px] gap-4 p-3 bg-muted/50 text-xs font-medium text-muted-foreground border-b">
-                      <div>Date</div>
-                      <div>Reason</div>
-                      <div>Description</div>
-                      <div className="text-right">Amount</div>
-                      <div className="text-right">Balance</div>
-                    </div>
-                    <div className="max-h-[400px] overflow-y-auto">
-                      {mockCreditTransactions.map(t => (
-                        <div key={t.id} className="grid grid-cols-[120px_1fr_100px_100px_120px] gap-4 p-3 border-b last:border-b-0 hover:bg-muted/50 transition-colors">
-                          <div className="text-sm">{formatDate(t.createdAt)}</div>
-                          <div>
-                            <Badge variant="outline" className="text-xs capitalize">{t.reason.replace('_', ' ')}</Badge>
+                  {creditQuery.isLoading ? (
+                    <p>Loading...</p>
+                  ) : (
+                    <div className="rounded-md border">
+                      <div className="grid grid-cols-[120px_1fr_100px_100px_120px] gap-4 p-3 bg-muted/50 text-xs font-medium text-muted-foreground border-b">
+                        <div>Date</div>
+                        <div>Reason</div>
+                        <div>Description</div>
+                        <div className="text-right">Amount</div>
+                        <div className="text-right">Balance</div>
+                      </div>
+                      <div className="max-h-[400px] overflow-y-auto">
+                        {creditData?.transactions.map(t => (
+                          <div key={t.id} className="grid grid-cols-[120px_1fr_100px_100px_120px] gap-4 p-3 border-b last:border-b-0 hover:bg-muted/50 transition-colors">
+                            <div className="text-sm">{t.createdAt ? formatDate(t.createdAt) : '—'}</div>
+                            <div>
+                              <Badge variant="outline" className="text-xs capitalize">{t.reason.replace('_', ' ')}</Badge>
+                            </div>
+                            <div className="text-sm text-muted-foreground">{t.description}</div>
+                            <div className={`py-2 px-3 text-right font-mono font-medium ${t.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {t.amount > 0 ? '+' : ''}{t.amount}
+                            </div>
+                            <div className="py-2 px-3 text-right text-sm font-medium text-muted-foreground">—</div>
                           </div>
-                          <div className="text-sm text-muted-foreground">{t.description}</div>
-                          <div className="text-right font-mono font-medium {t.amount > 0 ? 'text-green-600' : 'text-red-600'}">
-                            {t.amount > 0 ? '+' : ''}{t.amount}
-                          </div>
-                          <div className="text-right text-sm font-medium text-muted-foreground">—</div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -215,24 +197,30 @@ export default function BillingPage() {
                 <CardTitle>Feature Access</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {featureGates.map(feature => (
-                    <div key={feature.key} className="flex items-center justify-between p-4 rounded-lg border">
-                      <div className="flex items-center gap-4">
-                        <div className="p-2 bg-primary/10 rounded-lg">
-                          <feature.icon className="h-5 w-5 text-primary" />
+                {featureGatesQuery.isLoading ? (
+                  <p>Loading...</p>
+                ) : featureGatesData ? (
+                  <div className="space-y-4">
+                    {featureGates.map(feature => (
+                      <div key={feature.key} className="flex items-center justify-between p-4 rounded-lg border">
+                        <div className="flex items-center gap-4">
+                          <div className="p-2 bg-primary/10 rounded-lg">
+                            <feature.icon className="h-5 w-5 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{feature.label}</p>
+                            <p className="text-sm text-muted-foreground">{feature.description}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-medium">{feature.label}</p>
-                          <p className="text-sm text-muted-foreground">{feature.description}</p>
-                        </div>
+                        <Badge variant={featureGatesData[feature.key as keyof typeof featureGatesData] ? 'default' : 'outline'}>
+                          {featureGatesData[feature.key as keyof typeof featureGatesData] ? 'Enabled' : 'Disabled'}
+                        </Badge>
                       </div>
-                      <Badge variant={feature.key === 'plaid_relay' ? 'default' : 'outline'}>
-                        {feature.key === 'plaid_relay' ? 'Enabled' : 'Requires Credits'}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p>No feature data</p>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

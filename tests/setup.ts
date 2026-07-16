@@ -1,0 +1,5 @@
+import { beforeEach } from 'vitest';
+
+beforeEach(() => {
+  process.env.DATABASE_URL = process.env.TEST_DATABASE_URL || 'postgresql://localhost:5432/accounting_test';
+});

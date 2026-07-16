@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -80,11 +80,11 @@ export default function FixedAssetsPage() {
                       <div className="text-sm">{methodLabels[asset.method]}</div>
                       <div className="text-sm">{asset.usefulLifeYears}</div>
                       <div className="flex items-center gap-1 justify-end">
-                        <Button variant="ghost" size="icon" asChild title="View">
-                          <Link href={`/dashboard/fixed-assets/${asset.id}`}>
-                            <Plus className="h-4 w-4" />
-                          </Link>
-                        </Button>
+<Button variant="ghost" size="icon" asChild title="View">
+                           <Link href={`/dashboard/fixed-assets/${asset.id}`}>
+                             <Eye className="h-4 w-4" />
+                           </Link>
+                         </Button>
                       </div>
                     </div>
                   ))}

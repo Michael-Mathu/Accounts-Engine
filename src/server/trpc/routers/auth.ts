@@ -1,12 +1,93 @@
 import { z } from 'zod';
 import { router } from '../root';
-import { publicProcedure, protectedProcedure, companyProcedure, ownerProcedure } from '../root';
+import { publicProcedure, protectedProcedure, ownerProcedure } from '../root';
 import { schema } from '@/server/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { compare, hash } from 'bcryptjs';
 import { TRPCError } from '@trpc/server';
 
 export const authRouter = router({
+  signin: publicProcedure
+    .input(z.object({
+      email: z.string().email(),
+      password: z.string(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = ctx.db;
+      
+      const [user] = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, input.email));
+
+      if (!user || !user.passwordHash) {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials' });
+      }
+
+      const isValid = await compare(input.password, user.passwordHash);
+
+      if (!isValid) {
+        throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Invalid credentials' });
+      }
+
+      return { success: true };
+    }),
+
+  signup: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      email: z.string().email(),
+      password: z.string().min(8),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = ctx.db;
+      
+      const [existing] = await db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, input.email));
+
+      if (existing) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Email already registered' });
+      }
+
+      const passwordHash = await hash(input.password, 10);
+
+      const [user] = await db
+        .insert(schema.users)
+        .values({
+          name: input.name,
+          email: input.email,
+          passwordHash,
+        })
+        .returning();
+
+      // Create company for user
+      const [company] = await db
+        .insert(schema.companies)
+        .values({
+          name: `${input.name}'s Company`,
+          taxIdentifier: `TAX-${Date.now()}`,
+        })
+        .returning();
+
+      await db
+        .insert(schema.companyUsers)
+        .values({
+          companyId: company.id,
+          userId: user.id,
+          role: 'owner',
+        });
+
+      // Create default setup
+      await db.insert(schema.subscriptions).values({
+        companyId: company.id,
+        plan: 'self_hosted',
+      });
+
+      return { success: true, userId: user.id, companyId: company.id };
+    }),
+
   // Public: Request password reset
   requestPasswordReset: publicProcedure
     .input(z.object({
