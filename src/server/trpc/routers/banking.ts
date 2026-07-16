@@ -233,7 +233,7 @@ export const bankTransactionsRouter = router({
         postedDate: z.string().transform(val => new Date(val)),
         amount: z.number(),
         description: z.string(),
-        rawPayload: z.record(z.unknown()).optional(),
+        rawPayload: z.object({}).passthrough().optional(),
       })).min(1),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -276,8 +276,8 @@ export const bankTransactionsRouter = router({
           bankAccountId: input.bankAccountId,
           companyId: ctx.companyId!,
           externalTransactionId: t.externalTransactionId,
-          postedDate: t.postedDate,
-          amount: t.amount,
+          postedDate: t.postedDate.toISOString().split('T')[0],
+          amount: String(t.amount),
           description: t.description,
           rawPayload: t.rawPayload,
           status: 'unmatched' as const,

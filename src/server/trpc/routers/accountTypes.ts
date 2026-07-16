@@ -112,52 +112,52 @@ export const accountTypesRouter = router({
       return { success: true };
     }),
 
-  // Seed default account types (owner only)
-  seedDefaults: ownerProcedure
+// Seed default account types (owner only)
+   seedDefaults: ownerProcedure
     .mutation(async ({ ctx }) => {
       const db = ctx.db;
       await ctx.setRLSContext();
 
       const defaults = [
         // Assets
-        { class: 'asset', name: 'Current Assets', normalBalance: 'debit' },
-        { class: 'asset', name: 'Fixed Assets', normalBalance: 'debit' },
-        { class: 'asset', name: 'Other Assets', normalBalance: 'debit' },
-        { class: 'asset', name: 'Bank', normalBalance: 'debit' },
-        { class: 'asset', name: 'Accounts Receivable', normalBalance: 'debit' },
-        { class: 'asset', name: 'Inventory', normalBalance: 'debit' },
-        { class: 'asset', name: 'Prepaid Expenses', normalBalance: 'debit' },
+        { class: 'asset' as const, name: 'Current Assets', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Fixed Assets', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Other Assets', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Bank', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Accounts Receivable', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Inventory', normalBalance: 'debit' as const },
+        { class: 'asset' as const, name: 'Prepaid Expenses', normalBalance: 'debit' as const },
 
         // Liabilities
-        { class: 'liability', name: 'Current Liabilities', normalBalance: 'credit' },
-        { class: 'liability', name: 'Long-term Liabilities', normalBalance: 'credit' },
-        { class: 'liability', name: 'Accounts Payable', normalBalance: 'credit' },
-        { class: 'liability', name: 'Credit Card', normalBalance: 'credit' },
-        { class: 'liability', name: 'Payroll Liabilities', normalBalance: 'credit' },
-        { class: 'liability', name: 'Sales Tax Payable', normalBalance: 'credit' },
+        { class: 'liability' as const, name: 'Current Liabilities', normalBalance: 'credit' as const },
+        { class: 'liability' as const, name: 'Long-term Liabilities', normalBalance: 'credit' as const },
+        { class: 'liability' as const, name: 'Accounts Payable', normalBalance: 'credit' as const },
+        { class: 'liability' as const, name: 'Credit Card', normalBalance: 'credit' as const },
+        { class: 'liability' as const, name: 'Payroll Liabilities', normalBalance: 'credit' as const },
+        { class: 'liability' as const, name: 'Sales Tax Payable', normalBalance: 'credit' as const },
 
         // Equity
-        { class: 'equity', name: 'Owner\'s Equity', normalBalance: 'credit' },
-        { class: 'equity', name: 'Retained Earnings', normalBalance: 'credit' },
-        { class: 'equity', name: 'Capital Stock', normalBalance: 'credit' },
+        { class: 'equity' as const, name: 'Owner\'s Equity', normalBalance: 'credit' as const },
+        { class: 'equity' as const, name: 'Retained Earnings', normalBalance: 'credit' as const },
+        { class: 'equity' as const, name: 'Capital Stock', normalBalance: 'credit' as const },
 
         // Revenue
-        { class: 'revenue', name: 'Sales Revenue', normalBalance: 'credit' },
-        { class: 'revenue', name: 'Service Revenue', normalBalance: 'credit' },
-        { class: 'revenue', name: 'Other Income', normalBalance: 'credit' },
+        { class: 'revenue' as const, name: 'Sales Revenue', normalBalance: 'credit' as const },
+        { class: 'revenue' as const, name: 'Service Revenue', normalBalance: 'credit' as const },
+        { class: 'revenue' as const, name: 'Other Income', normalBalance: 'credit' as const },
 
         // Expenses
-        { class: 'expense', name: 'Cost of Goods Sold', normalBalance: 'debit' },
-        { class: 'expense', name: 'Payroll Expenses', normalBalance: 'debit' },
-        { class: 'expense', name: 'Rent Expense', normalBalance: 'debit' },
-        { class: 'expense', name: 'Utilities Expense', normalBalance: 'debit' },
-        { class: 'expense', name: 'Office Expenses', normalBalance: 'debit' },
-        { class: 'expense', name: 'Travel & Entertainment', normalBalance: 'debit' },
-        { class: 'expense', name: 'Professional Fees', normalBalance: 'debit' },
-        { class: 'expense', name: 'Insurance Expense', normalBalance: 'debit' },
-        { class: 'expense', name: 'Depreciation Expense', normalBalance: 'debit' },
-        { class: 'expense', name: 'Interest Expense', normalBalance: 'debit' },
-        { class: 'expense', name: 'Other Expenses', normalBalance: 'debit' },
+        { class: 'expense' as const, name: 'Cost of Goods Sold', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Payroll Expenses', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Rent Expense', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Utilities Expense', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Office Expenses', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Travel & Entertainment', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Professional Fees', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Insurance Expense', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Depreciation Expense', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Interest Expense', normalBalance: 'debit' as const },
+        { class: 'expense' as const, name: 'Other Expenses', normalBalance: 'debit' as const },
       ];
 
       const results = [];
@@ -166,14 +166,18 @@ export const accountTypesRouter = router({
           .select()
           .from(schema.accountTypes)
           .where(and(
-            eq(schema.accountTypes.class, def.class as typeof schema.accountTypes.class.enumValues[number]),
+            eq(schema.accountTypes.class, def.class),
             eq(schema.accountTypes.name, def.name)
           ));
 
         if (!existing) {
           const [created] = await db
             .insert(schema.accountTypes)
-            .values(def)
+            .values({
+              class: def.class,
+              name: def.name,
+              normalBalance: def.normalBalance,
+            })
             .returning();
           results.push(created);
         }

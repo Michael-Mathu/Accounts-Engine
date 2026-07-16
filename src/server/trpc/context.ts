@@ -1,12 +1,11 @@
 import { getDb } from '@/server/db';
 import type { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
-import { headers } from 'next/headers';
 import { sql } from 'drizzle-orm';
-import { jwtDecode } from 'jwt-decode';
+
+export type TRPCContext = Awaited<ReturnType<typeof createTRPCContext>>;
 
 export async function createTRPCContext(opts: { headers?: Headers; req?: NextRequest }) {
-  const { headers: headerList } = opts;
   const session = await auth();
   
   // Parse JWT to get user info if available
@@ -32,7 +31,7 @@ export async function createTRPCContext(opts: { headers?: Headers; req?: NextReq
     
     const result = await db.execute(userCompanyQuery);
     if (result.rows.length > 0) {
-      companyId = result.rows[0].company_id;
+      companyId = result.rows[0].company_id as string;
     }
   }
   

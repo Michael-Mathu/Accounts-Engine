@@ -1,4 +1,5 @@
-import { Metadata } from 'next';
+'use client';
+
 import { DashboardLayout } from '@/components/layout/dashboard-layout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -14,10 +15,6 @@ import {
   TrendingUp,
   DollarSign
 } from 'lucide-react';
-
-export const metadata: Metadata = {
-  title: 'Dashboard | Accounting Engine',
-};
 
 const stats = [
   { 
@@ -104,23 +101,21 @@ export default function DashboardPage() {
           <h2 className="text-xl font-semibold mb-4">Quick Actions</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {quickActions.map((action) => (
-              <Card 
-                key={action.name} 
-                className="hover:border-primary/50 transition-colors cursor-pointer"
-                onClick={() => window.location.href = action.href}
-              >
-                <CardContent className="pt-6">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-primary/10 rounded-lg text-primary">
-                      <action.icon className="h-6 w-6" />
+              <a key={action.name} href={action.href} className="block">
+                <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+                  <CardContent className="pt-6">
+                    <div className="flex items-center gap-4">
+                      <div className="p-3 bg-primary/10 rounded-lg text-primary">
+                        <action.icon className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{action.name}</p>
+                        <p className="text-sm text-muted-foreground">{action.description}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{action.name}</p>
-                      <p className="text-sm text-muted-foreground">{action.description}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </a>
             ))}
           </div>
         </div>

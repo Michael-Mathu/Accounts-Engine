@@ -6,13 +6,12 @@ import { TRPCError } from '@trpc/server';
 import { schema } from '@/server/db';
 
 export const billsRouter = router({
-  // Create bill
   create: accountantProcedure
     .input(z.object({
       vendorId: z.string().uuid(),
       billNumber: z.string().min(1).max(50),
-      issueDate: z.string().transform(val => new Date(val)),
-      dueDate: z.string().transform(val => new Date(val)),
+      issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       lines: z.array(z.object({
         description: z.string().min(1),
         quantity: z.number().min(1).default(1),
@@ -25,7 +24,6 @@ export const billsRouter = router({
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      // Validate vendor
       const [vendor] = await db
         .select()
         .from(schema.vendors)
@@ -38,7 +36,6 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found' });
       }
 
-      // Validate expense accounts
       const accountIds = input.lines.map(l => l.expenseAccountId);
       const accounts = await db
         .select({ id: schema.accounts.id, accountClass: schema.accountTypes.class })
@@ -53,11 +50,9 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'One or more expense accounts not found' });
       }
 
-      // Calculate totals
       const subtotal = input.lines.reduce((sum, line) => sum + (line.quantity * line.unitPrice), 0);
       const total = subtotal + input.taxTotal;
 
-      // Check bill number uniqueness
       const [existing] = await db
         .select()
         .from(schema.bills)
@@ -70,7 +65,6 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'CONFLICT', message: 'Bill number already exists' });
       }
 
-      // Get default journal and period
       const [journal] = await db
         .select()
         .from(schema.journals)
@@ -85,8 +79,8 @@ export const billsRouter = router({
         .where(and(
           eq(schema.accountingPeriods.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          lte(schema.accountingPeriods.startDate, input.issueDate.toISOString().split('T')[0]),
-          gte(schema.accountingPeriods.endDate, input.issueDate.toISOString().split('T')[0])
+          lte(schema.accountingPeriods.startDate, input.issueDate),
+          gte(schema.accountingPeriods.endDate, input.issueDate)
         ))
         .limit(1);
 
@@ -94,7 +88,6 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period for this date' });
       }
 
-      // Create bill
       const [bill] = await db
         .insert(schema.bills)
         .values({
@@ -104,18 +97,17 @@ export const billsRouter = router({
           issueDate: input.issueDate,
           dueDate: input.dueDate,
           status: 'draft',
-          subtotal,
-          taxTotal: input.taxTotal,
-          total,
+          subtotal: String(subtotal),
+          taxTotal: String(input.taxTotal),
+          total: String(total),
         })
         .returning();
 
-      // Create bill lines
       const linesToInsert = input.lines.map(line => ({
         billId: bill.id,
         description: line.description,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
+        quantity: String(line.quantity),
+        unitPrice: String(line.unitPrice),
         expenseAccountId: line.expenseAccountId,
       }));
 
@@ -124,7 +116,6 @@ export const billsRouter = router({
       return bill;
     }),
 
-  // Approve bill (create journal entry)
   approve: adminProcedure
     .input(z.object({
       id: z.string().uuid(),
@@ -149,13 +140,11 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Can only approve draft bills' });
       }
 
-      // Get lines
       const lines = await db
         .select()
         .from(schema.billLines)
         .where(eq(schema.billLines.billId, input.id));
 
-      // Get AP account
       const [apAccount] = await db
         .select()
         .from(schema.accounts)
@@ -171,13 +160,11 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Accounts Payable account not configured' });
       }
 
-      // Get vendor name for description
       const [vendor] = await db
         .select({ name: schema.vendors.name })
         .from(schema.vendors)
         .where(eq(schema.vendors.id, bill.vendorId));
 
-      // Get default journal and period
       const [journal] = await db
         .select()
         .from(schema.journals)
@@ -192,8 +179,8 @@ export const billsRouter = router({
         .where(and(
           eq(schema.accountingPeriods.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          lte(schema.accountingPeriods.startDate, bill.issueDate.toISOString().split('T')[0]),
-          gte(schema.accountingPeriods.endDate, bill.issueDate.toISOString().split('T')[0])
+          lte(schema.accountingPeriods.startDate, bill.issueDate),
+          gte(schema.accountingPeriods.endDate, bill.issueDate)
         ))
         .limit(1);
 
@@ -201,11 +188,11 @@ export const billsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period' });
       }
 
-      // Create journal entry
       const [entry] = await db
         .insert(schema.journalEntries)
         .values({
-          journalId: journal.id,
+          companyId: ctx.companyId!,
+          journalId: journal!.id,
           accountingPeriodId: period.id,
           entryDate: bill.issueDate,
           postingDate: bill.issueDate,
@@ -216,32 +203,28 @@ export const billsRouter = router({
         })
         .returning();
 
-      // Create lines: debit expense accounts, credit AP
       const entryLines = [];
 
-      // Credit AP
       entryLines.push({
         journalEntryId: entry.id,
         accountId: apAccount.accounts.id,
         description: `Bill ${bill.billNumber} - ${vendor?.name || bill.vendorId}`,
-        debit: 0,
-        credit: bill.total.toFixed(4),
+        debit: '0',
+        credit: String(bill.total),
       });
 
-      // Debit expense accounts
       for (const line of lines) {
         entryLines.push({
           journalEntryId: entry.id,
           accountId: line.expenseAccountId,
           description: line.description,
-          debit: line.amount.toFixed(4),
-          credit: 0,
+          debit: String(line.amount),
+          credit: '0',
         });
       }
 
       await db.insert(schema.journalLines).values(entryLines);
 
-      // Update bill
       const [updated] = await db
         .update(schema.bills)
         .set({ 
@@ -254,7 +237,6 @@ export const billsRouter = router({
       return updated;
     }),
 
-  // Void bill
   void: adminProcedure
     .input(z.object({
       id: z.string().uuid(),
@@ -289,10 +271,11 @@ export const billsRouter = router({
           const [reversal] = await db
             .insert(schema.journalEntries)
             .values({
+              companyId: ctx.companyId!,
               journalId: entry.journalId,
               accountingPeriodId: entry.accountingPeriodId,
-              entryDate: new Date(),
-              postingDate: new Date(),
+              entryDate: new Date().toISOString().split('T')[0],
+              postingDate: new Date().toISOString().split('T')[0],
               referenceNumber: `REV-${bill.billNumber}`,
               description: `Void of Bill ${bill.billNumber}`,
               isPosted: false,
@@ -306,12 +289,12 @@ export const billsRouter = router({
             .from(schema.journalLines)
             .where(eq(schema.journalLines.journalEntryId, entry.id));
 
-          const reversedLines = originalLines.map(line => ({
+          const reversedLines = originalLines.map((line) => ({
             journalEntryId: reversal.id,
             accountId: line.accountId,
             description: line.description,
-            debit: line.credit,
-            credit: line.debit,
+            debit: line.credit || '0',
+            credit: line.debit || '0',
           }));
 
           await db.insert(schema.journalLines).values(reversedLines);
@@ -333,8 +316,8 @@ export const billsRouter = router({
       pageSize: z.number().int().positive().max(100).default(25),
       status: z.enum(['draft', 'approved', 'partial', 'paid', 'void']).optional(),
       vendorId: z.string().uuid().optional(),
-      fromDate: z.string().transform(val => new Date(val)).optional(),
-      toDate: z.string().transform(val => new Date(val)).optional(),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;

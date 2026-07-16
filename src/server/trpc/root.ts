@@ -10,7 +10,7 @@ import { billsRouter } from './routers/bills';
 import { paymentsRouter } from './routers/payments';
 import { receiptsRouter } from './routers/receipts';
 import { aiRouter } from './routers/ai';
-import { bankAccountsRouter, bankTransactionsRouter, reconciliationRouter } from './routers/banking';
+import { bankAccountsRouter, bankTransactionsRouter } from './routers/banking';
 import { reconciliationEngineRouter } from './routers/reconciliation-engine';
 import { taxRouter } from './routers/tax';
 import { billingRouter } from './routers/billing';
@@ -32,7 +32,6 @@ export const appRouter = router({
   ai: aiRouter,
   bankAccounts: bankAccountsRouter,
   bankTransactions: bankTransactionsRouter,
-  reconciliation: reconciliationRouter,
   reconciliationEngine: reconciliationEngineRouter,
   tax: taxRouter,
   billing: billingRouter,

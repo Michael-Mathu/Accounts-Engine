@@ -6,11 +6,11 @@ export const normalBalanceType = pgEnum('normal_balance_type', ['debit', 'credit
 export const invoiceStatusType = pgEnum('invoice_status', ['draft', 'sent', 'partial', 'paid', 'void']);
 export const billStatusType = pgEnum('bill_status', ['draft', 'approved', 'partial', 'paid', 'void']);
 export const bankTransactionStatusType = pgEnum('bank_transaction_status', ['unmatched', 'matched', 'excluded']);
-export const matchTypeType = pgEnum('match_type', ['exact', 'split', 'tolerance', 'rule']);
+export const matchTypeType = pgEnum('match_type', ['exact', 'split', 'tolerance', 'rule', 'manual']);
 export const receiptStatusType = pgEnum('receipt_status', ['pending', 'processing', 'processed', 'failed', 'approved', 'rejected']);
 export const subscriptionStatusType = pgEnum('subscription_status', ['active', 'canceled', 'past_due', 'incomplete', 'expired']);
 export const subscriptionPlanType = pgEnum('subscription_plan', ['self_hosted', 'monthly', 'quarterly', 'annual']);
-export const creditReasonType = pgEnum('credit_reason', ['receipt_ocr', 'bank_sync', 'ai_report', 'ledger_export', 'purchase']);
+export const creditReasonType = pgEnum('credit_reason', ['receipt_ocr', 'bank_sync', 'ai_report', 'ledger_export', 'purchase', 'depreciation_posting']);
 export const depreciationMethodType = pgEnum('depreciation_method', ['straight_line', 'declining_balance', 'sum_of_years_digits']);
 
 export const companies = pgTable('companies', {
@@ -303,6 +303,18 @@ export const fixedAssets = pgTable('fixed_assets', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
 });
 
+export const depreciationSchedules = pgTable('depreciation_schedules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  fixedAssetId: uuid('fixed_asset_id').notNull().references(() => fixedAssets.id, { onDelete: 'cascade' }),
+  accountingPeriodId: uuid('accounting_period_id').notNull().references(() => accountingPeriods.id),
+  amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+  isPosted: boolean('is_posted').notNull().default(false),
+  journalEntryId: uuid('journal_entry_id').references(() => journalEntries.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+}, (table) => ({
+  assetPeriodIdx: index('depreciation_schedules_asset_period_idx').on(table.fixedAssetId, table.accountingPeriodId),
+}));
+
 export const subscriptions = pgTable('subscriptions', {
   id: uuid('id').primaryKey().defaultRandom(),
   companyId: uuid('company_id').notNull().unique().references(() => companies.id, { onDelete: 'cascade' }),
@@ -580,10 +592,17 @@ export const mileageLogsRelations = relations(mileageLogs, ({ one }) => ({
   user: one(users, { fields: [mileageLogs.userId], references: [users.id] }),
 }));
 
-export const fixedAssetsRelations = relations(fixedAssets, ({ one }) => ({
+export const fixedAssetsRelations = relations(fixedAssets, ({ one, many }) => ({
   company: one(companies, { fields: [fixedAssets.companyId], references: [companies.id] }),
   assetAccount: one(accounts, { fields: [fixedAssets.assetAccountId], references: [accounts.id] }),
   accumulatedDepreciationAccount: one(accounts, { fields: [fixedAssets.accumulatedDepreciationAccountId], references: [accounts.id] }),
+  depreciationSchedules: many(depreciationSchedules),
+}));
+
+export const depreciationSchedulesRelations = relations(depreciationSchedules, ({ one }) => ({
+  fixedAsset: one(fixedAssets, { fields: [depreciationSchedules.fixedAssetId], references: [fixedAssets.id] }),
+  accountingPeriod: one(accountingPeriods, { fields: [depreciationSchedules.accountingPeriodId], references: [accountingPeriods.id] }),
+  journalEntry: one(journalEntries, { fields: [depreciationSchedules.journalEntryId], references: [journalEntries.id] }),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -660,6 +679,7 @@ export const schema = {
   taxCategories,
   mileageLogs,
   fixedAssets,
+  depreciationSchedules,
   subscriptions,
   creditBalances,
   creditTransactions,

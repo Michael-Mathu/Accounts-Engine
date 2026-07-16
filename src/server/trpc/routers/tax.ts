@@ -18,7 +18,7 @@ export const taxRouter = router({
       
       return lines;
     }),
-  
+    
   // Map account to Schedule C line (accountant+)
   mapAccount: accountantProcedure
     .input(z.object({
@@ -37,12 +37,11 @@ export const taxRouter = router({
       
       return account;
     }),
-  
+    
   // Get mileage rates (accountant+)
   getMileageRates: accountantProcedure.query(async ({ ctx }) => {
-    // Return standard IRS mileage rates by year
     return [
-      { year: 2026, rate: 0.67 }, // Projected 2026 rate
+      { year: 2026, rate: 0.67 },
       { year: 2025, rate: 0.65 },
       { year: 2024, rate: 0.65 },
     ];
@@ -51,7 +50,7 @@ export const taxRouter = router({
   // Create mileage log (accountant+)
   createMileageLog: accountantProcedure
     .input(z.object({
-      logDate: z.string().transform(val => new Date(val)),
+      logDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       startLocation: z.string().optional(),
       endLocation: z.string().optional(),
       businessPurpose: z.string().min(1),
@@ -69,13 +68,13 @@ export const taxRouter = router({
         startLocation: input.startLocation,
         endLocation: input.endLocation,
         businessPurpose: input.businessPurpose,
-        miles: input.miles,
-        rateUsed: input.rateUsed,
+        miles: String(input.miles),
+        rateUsed: String(input.rateUsed),
       }).returning();
       
       return log;
     }),
-  
+    
   // List mileage logs (accountant+)
   listMileageLogs: accountantProcedure
     .query(async ({ ctx }) => {
@@ -90,12 +89,12 @@ export const taxRouter = router({
       
       return logs;
     }),
-  
+    
   // Create fixed asset (accountant+)
   createFixedAsset: accountantProcedure
     .input(z.object({
       name: z.string().min(1),
-      purchaseDate: z.string().transform(val => new Date(val)),
+      purchaseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       cost: z.number().min(0.01),
       salvageValue: z.number().default(0),
       usefulLifeYears: z.number().min(1),
@@ -111,8 +110,8 @@ export const taxRouter = router({
         companyId: ctx.companyId as string,
         name: input.name,
         purchaseDate: input.purchaseDate,
-        cost: input.cost,
-        salvageValue: input.salvageValue,
+        cost: String(input.cost),
+        salvageValue: String(input.salvageValue),
         usefulLifeYears: input.usefulLifeYears,
         method: input.method,
         assetAccountId: input.assetAccountId,
@@ -121,7 +120,7 @@ export const taxRouter = router({
       
       return asset;
     }),
-  
+    
   // List fixed assets (accountant+)
   listFixedAssets: accountantProcedure
     .query(async ({ ctx }) => {

@@ -161,8 +161,8 @@ export const journalEntriesRouter = router({
     .input(z.object({
       journalId: z.string().uuid(),
       accountingPeriodId: z.string().uuid(),
-      entryDate: z.string().transform(val => new Date(val)),
-      postingDate: z.string().transform(val => new Date(val)),
+      entryDate: z.string().transform(val => new Date(val).toISOString().split('T')[0]),
+      postingDate: z.string().transform(val => new Date(val).toISOString().split('T')[0]),
       referenceNumber: z.string().max(100).optional(),
       description: z.string().optional(),
       lines: z.array(z.object({
@@ -243,28 +243,29 @@ export const journalEntriesRouter = router({
         }
       }
 
-      // Create the entry
-      const [entry] = await db
-        .insert(schema.journalEntries)
-        .values({
-          journalId: input.journalId,
-          accountingPeriodId: input.accountingPeriodId,
-          entryDate: input.entryDate,
-          postingDate: input.postingDate,
-          referenceNumber: input.referenceNumber,
-          description: input.description,
-          isPosted: false,
-          createdBy: ctx.userId!,
-        })
-        .returning();
+// Create the entry
+       const [entry] = await db
+         .insert(schema.journalEntries)
+         .values({
+           companyId: ctx.companyId!,
+           journalId: input.journalId,
+           accountingPeriodId: input.accountingPeriodId,
+           entryDate: input.entryDate,
+           postingDate: input.postingDate,
+           referenceNumber: input.referenceNumber,
+           description: input.description,
+           isPosted: false,
+           createdBy: ctx.userId!,
+         })
+         .returning();
 
       // Create lines
       const linesToInsert = input.lines.map(line => ({
         journalEntryId: entry.id,
         accountId: line.accountId,
         description: line.description,
-        debit: line.debit || 0,
-        credit: line.credit || 0,
+        debit: String(line.debit || 0),
+        credit: String(line.credit || 0),
       }));
 
       await db
@@ -381,31 +382,32 @@ const totalDebit = lines.reduce((sum: number, l: { debit: string | null; credit:
         .from(schema.journalLines)
         .where(eq(schema.journalLines.journalEntryId, input.id));
 
-      // Create reversal entry
-      const reversalDate = input.reversalDate || new Date();
-      const [reversal] = await db
-        .insert(schema.journalEntries)
-        .values({
-          journalId: entry.journalId,
-          accountingPeriodId: entry.accountingPeriodId,
-          entryDate: reversalDate,
-          postingDate: reversalDate,
-          referenceNumber: `REV-${entry.referenceNumber || entry.id.substring(0, 8)}`,
-          description: input.description || `Reversal of ${entry.referenceNumber || entry.id}`,
-          isPosted: false,
-          reversedEntryId: entry.id,
-          createdBy: ctx.userId!,
-        })
-        .returning();
+// Create reversal entry
+       const reversalDate = input.reversalDate || new Date().toISOString().split("T")[0];
+       const [reversal] = await db
+         .insert(schema.journalEntries)
+         .values({
+           companyId: ctx.companyId!,
+           journalId: entry.journalId,
+           accountingPeriodId: entry.accountingPeriodId,
+           entryDate: reversalDate as string,
+           postingDate: reversalDate as string,
+           referenceNumber: `REV-${entry.referenceNumber || entry.id.substring(0, 8)}`,
+           description: input.description || `Reversal of ${entry.referenceNumber || entry.id}`,
+           isPosted: false,
+           reversedEntryId: entry.id,
+           createdBy: ctx.userId!,
+         })
+         .returning();
 
 // Create reversed lines (swap debit/credit)
-       const reversedLines = originalLines.map((line: { accountId: string; description: string | null; credit: string | null; debit: string | null }) => ({
-         journalEntryId: reversal.id,
-         accountId: line.accountId,
-         description: line.description,
-         debit: line.credit,
-         credit: line.debit,
-       }));
+        const reversedLines = originalLines.map((line: { accountId: string; description: string | null; credit: string | null; debit: string | null }) => ({
+          journalEntryId: reversal.id,
+          accountId: line.accountId,
+          description: line.description,
+          debit: line.credit || "0",
+          credit: line.debit || "0",
+        }));
 
       await db.insert(schema.journalLines).values(reversedLines);
 

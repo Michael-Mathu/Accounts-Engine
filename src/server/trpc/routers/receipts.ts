@@ -68,7 +68,7 @@ export const receiptsRouter = router({
           .select()
           .from(schema.journalEntries)
           .where(eq(schema.journalEntries.id, receipt.draftJournalEntryId));
-        receipt.draftJournalEntry = entry;
+        return { ...receipt, draftJournalEntry: entry };
       }
       
       return receipt;

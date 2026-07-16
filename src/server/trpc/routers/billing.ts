@@ -217,11 +217,11 @@ export const billingRouter = router({
       let multiEntityAccess = isSelfHosted || isHostedActive;
 
       if (flags) {
-        if (flags.plaidRelayEnabled !== undefined) plaidAccess = flags.plaidRelayEnabled;
-        if (flags.aiReceiptExtractionEnabled !== undefined) aiReceiptAccess = flags.aiReceiptExtractionEnabled;
-        if (flags.aiReportsEnabled !== undefined) aiReportsAccess = flags.aiReportsEnabled;
-        if (flags.apiAccessEnabled !== undefined) apiAccess = flags.apiAccessEnabled;
-        if (flags.multiEntityEnabled !== undefined) multiEntityAccess = flags.multiEntityEnabled;
+        if (flags.plaidRelayEnabled !== null) plaidAccess = !!flags.plaidRelayEnabled;
+        if (flags.aiReceiptExtractionEnabled !== null) aiReceiptAccess = !!flags.aiReceiptExtractionEnabled;
+        if (flags.aiReportsEnabled !== null) aiReportsAccess = !!flags.aiReportsEnabled;
+        if (flags.apiAccessEnabled !== null) apiAccess = !!flags.apiAccessEnabled;
+        if (flags.multiEntityEnabled !== null) multiEntityAccess = !!flags.multiEntityEnabled;
       }
 
       return {
@@ -241,7 +241,7 @@ export const billingRouter = router({
     .input(z.object({
       eventType: z.string(),
       data: z.object({
-        object: z.record(z.unknown()),
+        object: z.object({}).passthrough(),
       }),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -256,8 +256,12 @@ export const billingRouter = router({
 
       switch (eventType) {
 case 'checkout.session.completed': {
-          const session = data.object as Record<string, unknown>;
-          const companyId = session.metadata?.companyId as string | undefined;
+          const session = data.object as {
+            metadata?: { companyId?: string; plan?: string };
+            customer?: string;
+            subscription?: string | { current_period_start?: number; current_period_end?: number };
+          };
+          const companyId = session.metadata?.companyId;
           const plan = session.metadata?.plan as 'self_hosted' | 'monthly' | 'quarterly' | 'annual' | undefined;
 
           if (companyId && plan) {
@@ -319,10 +323,11 @@ case 'checkout.session.completed': {
 
         case 'customer.subscription.updated': {
           const subscription = data.object as Record<string, unknown>;
+          const status = subscription.status as 'active' | 'canceled' | 'past_due' | 'incomplete' | 'expired' | undefined;
           await db
             .update(schema.subscriptions)
             .set({
-              status: subscription.status as string,
+              status: status || 'active',
               currentPeriodStart: new Date((subscription.current_period_start as number) * 1000),
               currentPeriodEnd: new Date((subscription.current_period_end as number) * 1000),
               updatedAt: new Date(),
@@ -332,13 +337,16 @@ case 'checkout.session.completed': {
         }
 
         case 'customer.subscription.deleted': {
-          await db
-            .update(schema.subscriptions)
-            .set({
-              status: 'canceled',
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.subscriptions.stripeSubscriptionId, data.object.id));
+          const subscription = data.object as { id?: string };
+          if (subscription.id) {
+            await db
+              .update(schema.subscriptions)
+              .set({
+                status: 'canceled',
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.subscriptions.stripeSubscriptionId, subscription.id));
+          }
           break;
         }
       }

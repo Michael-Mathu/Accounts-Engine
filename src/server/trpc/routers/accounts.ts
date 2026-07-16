@@ -37,8 +37,21 @@ export const accountsRouter = router({
         .orderBy(asc(schema.accounts.code));
 
       // Build tree structure
-      const accountMap = new Map<string, typeof allAccounts[0] & { children: typeof allAccounts }>();
-      const roots: typeof allAccounts[0] & { children: typeof allAccounts }[] = [];
+      const allAccountsNonEmpty = allAccounts as Array<{
+        id: string;
+        code: string;
+        name: string;
+        description: string | null;
+        accountTypeId: number;
+        parentId: string | null;
+        isActive: boolean;
+        accountClass: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+        normalBalance: 'debit' | 'credit';
+        scheduleCLineId: string | null;
+      }>;
+      
+      const accountMap = new Map<string, typeof allAccountsNonEmpty[0] & { children: typeof allAccountsNonEmpty }>();
+      const roots: (typeof allAccountsNonEmpty[0] & { children: typeof allAccountsNonEmpty })[] = [];
 
       for (const acc of allAccounts) {
         accountMap.set(acc.id, { ...acc, children: [] });

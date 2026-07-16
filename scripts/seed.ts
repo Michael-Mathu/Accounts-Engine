@@ -1,6 +1,6 @@
 import { getDb } from "@/server/db";
 import { schema } from "@/server/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { hash } from "bcryptjs";
 import { faker } from "@faker-js/faker";
 
@@ -46,44 +46,44 @@ async function seed() {
   // Create default account types
   const defaultAccountTypes = [
     // Assets
-    { class: "asset", name: "Current Assets", normal_balance: "debit" },
-    { class: "asset", name: "Fixed Assets", normal_balance: "debit" },
-    { class: "asset", name: "Other Assets", normal_balance: "debit" },
-    { class: "asset", name: "Bank", normal_balance: "debit" },
-    { class: "asset", name: "Accounts Receivable", normal_balance: "debit" },
-    { class: "asset", name: "Inventory", normal_balance: "debit" },
-    { class: "asset", name: "Prepaid Expenses", normal_balance: "debit" },
+    { class: "asset" as const, name: "Current Assets", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Fixed Assets", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Other Assets", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Bank", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Accounts Receivable", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Inventory", normal_balance: "debit" as const },
+    { class: "asset" as const, name: "Prepaid Expenses", normal_balance: "debit" as const },
 
     // Liabilities
-    { class: "liability", name: "Current Liabilities", normal_balance: "credit" },
-    { class: "liability", name: "Long-term Liabilities", normal_balance: "credit" },
-    { class: "liability", name: "Accounts Payable", normal_balance: "credit" },
-    { class: "liability", name: "Credit Card", normal_balance: "credit" },
-    { class: "liability", name: "Payroll Liabilities", normal_balance: "credit" },
-    { class: "liability", name: "Sales Tax Payable", normal_balance: "credit" },
+    { class: "liability" as const, name: "Current Liabilities", normal_balance: "credit" as const },
+    { class: "liability" as const, name: "Long-term Liabilities", normal_balance: "credit" as const },
+    { class: "liability" as const, name: "Accounts Payable", normal_balance: "credit" as const },
+    { class: "liability" as const, name: "Credit Card", normal_balance: "credit" as const },
+    { class: "liability" as const, name: "Payroll Liabilities", normal_balance: "credit" as const },
+    { class: "liability" as const, name: "Sales Tax Payable", normal_balance: "credit" as const },
 
     // Equity
-    { class: "equity", name: "Owner's Equity", normal_balance: "credit" },
-    { class: "equity", name: "Retained Earnings", normal_balance: "credit" },
-    { class: "equity", name: "Capital Stock", normal_balance: "credit" },
+    { class: "equity" as const, name: "Owner's Equity", normal_balance: "credit" as const },
+    { class: "equity" as const, name: "Retained Earnings", normal_balance: "credit" as const },
+    { class: "equity" as const, name: "Capital Stock", normal_balance: "credit" as const },
 
     // Revenue
-    { class: "revenue", name: "Sales Revenue", normal_balance: "credit" },
-    { class: "revenue", name: "Service Revenue", normal_balance: "credit" },
-    { class: "revenue", name: "Other Income", normal_balance: "credit" },
+    { class: "revenue" as const, name: "Sales Revenue", normal_balance: "credit" as const },
+    { class: "revenue" as const, name: "Service Revenue", normal_balance: "credit" as const },
+    { class: "revenue" as const, name: "Other Income", normal_balance: "credit" as const },
 
     // Expenses
-    { class: "expense", name: "Cost of Goods Sold", normal_balance: "debit" },
-    { class: "expense", name: "Payroll Expenses", normal_balance: "debit" },
-    { class: "expense", name: "Rent Expense", normal_balance: "debit" },
-    { class: "expense", name: "Utilities Expense", normal_balance: "debit" },
-    { class: "expense", name: "Office Expenses", normal_balance: "debit" },
-    { class: "expense", name: "Travel & Entertainment", normal_balance: "debit" },
-    { class: "expense", name: "Professional Fees", normal_balance: "debit" },
-    { class: "expense", name: "Insurance Expense", normal_balance: "debit" },
-    { class: "expense", name: "Depreciation Expense", normal_balance: "debit" },
-    { class: "expense", name: "Interest Expense", normal_balance: "debit" },
-    { class: "expense", name: "Other Expenses", normal_balance: "debit" },
+    { class: "expense" as const, name: "Cost of Goods Sold", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Payroll Expenses", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Rent Expense", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Utilities Expense", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Office Expenses", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Travel & Entertainment", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Professional Fees", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Insurance Expense", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Depreciation Expense", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Interest Expense", normal_balance: "debit" as const },
+    { class: "expense" as const, name: "Other Expenses", normal_balance: "debit" as const },
   ];
 
   console.log("Seeding account types...");
@@ -103,7 +103,11 @@ async function seed() {
     if (!existing) {
       const [created] = await db
         .insert(schema.accountTypes)
-        .values(type)
+        .values({
+          class: type.class,
+          name: type.name,
+          normalBalance: type.normal_balance as 'debit' | 'credit',
+        })
         .returning();
       accountTypeMap.set(`${type.class}:${type.name}`, created.id);
     } else {
@@ -223,16 +227,19 @@ async function seed() {
     .insert(schema.fiscalYears)
     .values({
       companyId: company.id,
-      startDate: new Date("2024-01-01"),
-      endDate: new Date("2024-12-31"),
+      name: "FY 2024",
+      startDate: "2024-01-01",
+      endDate: "2024-12-31",
       isClosed: false,
     })
     .returning();
 
   await db.insert(schema.accountingPeriods).values({
     fiscalYearId: fiscalYear.id,
-    startDate: new Date("2024-01-01"),
-    endDate: new Date("2024-12-31"),
+    companyId: company.id,
+    name: "FY 2024",
+    startDate: "2024-01-01",
+    endDate: "2024-12-31",
     isClosed: false,
   });
 

@@ -9,7 +9,7 @@ export const reportsRouter = router({
   // Trial Balance
   trialBalance: accountantProcedure
     .input(z.object({
-      asOfDate: z.string().transform(val => new Date(val)).optional(),
+      asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       accountingPeriodId: z.string().uuid().optional(),
       includeZeroBalance: z.boolean().default(false),
     }))
@@ -17,8 +17,20 @@ export const reportsRouter = router({
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      // Get balance sums per account from posted journal entries
-      let linesQuery = db
+      const conditions = [
+        eq(schema.journalEntries.companyId, ctx.companyId!),
+        eq(schema.journalEntries.isPosted, true),
+      ];
+
+      if (input.asOfDate) {
+        conditions.push(lte(schema.journalEntries.postingDate, input.asOfDate));
+      }
+
+      if (input.accountingPeriodId) {
+        conditions.push(eq(schema.journalEntries.accountingPeriodId, input.accountingPeriodId));
+      }
+
+      const lineSums = await db
         .select({
           accountId: schema.journalLines.accountId,
           totalDebit: sum(schema.journalLines.debit).as('totalDebit'),
@@ -26,20 +38,8 @@ export const reportsRouter = router({
         })
         .from(schema.journalLines)
         .innerJoin(schema.journalEntries, eq(schema.journalLines.journalEntryId, schema.journalEntries.id))
-        .where(and(
-          eq(schema.journalEntries.companyId, ctx.companyId!),
-          eq(schema.journalEntries.isPosted, true),
-        ));
-
-      if (input.asOfDate) {
-        linesQuery = linesQuery.where(lte(schema.journalEntries.postingDate, input.asOfDate));
-      }
-
-      if (input.accountingPeriodId) {
-        linesQuery = linesQuery.where(eq(schema.journalEntries.accountingPeriodId, input.accountingPeriodId));
-      }
-
-      const lineSums = await linesQuery.groupBy(schema.journalLines.accountId);
+        .where(and(...conditions))
+        .groupBy(schema.journalLines.accountId);
 
       const balanceMap = new Map();
       for (const ls of lineSums) {
@@ -49,7 +49,6 @@ export const reportsRouter = router({
         });
       }
 
-      // Get all active accounts with their types
       const accounts = await db
         .select({
           id: schema.accounts.id,
@@ -69,7 +68,6 @@ export const reportsRouter = router({
         ))
         .orderBy(asc(schema.accounts.code));
 
-      // Build trial balance rows
       const rows = accounts.map(acc => {
         const balances = balanceMap.get(acc.id) || { debit: 0, credit: 0 };
         const netBalance = balances.debit - balances.credit;
@@ -92,20 +90,20 @@ export const reportsRouter = router({
         ? rows 
         : rows.filter(r => r.balance !== 0 || r.debit !== 0 || r.credit !== 0);
 
-      const totalDebits = filteredRows.reduce((sum, r) => sum + r.debit, 0);
-      const totalCredits = filteredRows.reduce((sum, r) => sum + r.credit, 0);
-      const totalBalance = filteredRows.reduce((sum, r) => sum + r.balance, 0);
+      const totalDebits = filteredRows.reduce((sum: number, r) => sum + r.debit, 0);
+      const totalCredits = filteredRows.reduce((sum: number, r) => sum + r.credit, 0);
+      const totalBalance = filteredRows.reduce((sum: number, r) => sum + r.balance, 0);
 
       const byClass = {
-        asset: filteredRows.filter(r => r.accountClass === 'asset'),
-        liability: filteredRows.filter(r => r.accountClass === 'liability'),
-        equity: filteredRows.filter(r => r.accountClass === 'equity'),
-        revenue: filteredRows.filter(r => r.accountClass === 'revenue'),
-        expense: filteredRows.filter(r => r.accountClass === 'expense'),
+        asset: filteredRows.filter((r) => r.accountClass === 'asset'),
+        liability: filteredRows.filter((r) => r.accountClass === 'liability'),
+        equity: filteredRows.filter((r) => r.accountClass === 'equity'),
+        revenue: filteredRows.filter((r) => r.accountClass === 'revenue'),
+        expense: filteredRows.filter((r) => r.accountClass === 'expense'),
       };
 
       return {
-        asOfDate: input.asOfDate || new Date(),
+        asOfDate: input.asOfDate || new Date().toISOString().split('T')[0],
         accountingPeriodId: input.accountingPeriodId,
         rows: filteredRows,
         totals: {
@@ -121,18 +119,29 @@ export const reportsRouter = router({
   // Profit & Loss (Income Statement)
   profitAndLoss: accountantProcedure
     .input(z.object({
-      fromDate: z.string().transform(val => new Date(val)),
-      toDate: z.string().transform(val => new Date(val)),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       accountingPeriodId: z.string().uuid().optional(),
-      compareFromDate: z.string().transform(val => new Date(val)).optional(),
-      compareToDate: z.string().transform(val => new Date(val)).optional(),
+      compareFromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      compareToDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      async function getBalances(from: Date, to: Date, periodId?: string) {
-        let query = db
+      async function getBalances(from: string, to: string, periodId?: string) {
+        const conditions = [
+          eq(schema.journalEntries.companyId, ctx.companyId!),
+          eq(schema.journalEntries.isPosted, true),
+          gte(schema.journalEntries.postingDate, from),
+          lte(schema.journalEntries.postingDate, to),
+        ];
+
+        if (periodId) {
+          conditions.push(eq(schema.journalEntries.accountingPeriodId, periodId));
+        }
+
+        const results = await db
           .select({
             accountId: schema.journalLines.accountId,
             totalDebit: sum(schema.journalLines.debit).as('totalDebit'),
@@ -146,24 +155,14 @@ export const reportsRouter = router({
           .innerJoin(schema.journalEntries, eq(schema.journalLines.journalEntryId, schema.journalEntries.id))
           .innerJoin(schema.accounts, eq(schema.journalLines.accountId, schema.accounts.id))
           .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
-          .where(and(
-            eq(schema.journalEntries.companyId, ctx.companyId!),
-            eq(schema.journalEntries.isPosted, true),
-            gte(schema.journalEntries.postingDate, from),
-            lte(schema.journalEntries.postingDate, to),
-          ));
-
-        if (periodId) {
-          query = query.where(eq(schema.journalEntries.accountingPeriodId, periodId));
-        }
-
-        const results = await query.groupBy(
-          schema.journalLines.accountId,
-          schema.accounts.code,
-          schema.accounts.name,
-          schema.accountTypes.class,
-          schema.accountTypes.normalBalance
-        );
+          .where(and(...conditions))
+          .groupBy(
+            schema.journalLines.accountId,
+            schema.accounts.code,
+            schema.accounts.name,
+            schema.accountTypes.class,
+            schema.accountTypes.normalBalance
+          );
 
         return results.map(r => ({
           accountId: r.accountId,
@@ -183,27 +182,27 @@ export const reportsRouter = router({
           : Promise.resolve([]),
       ]);
 
-      const revenueAccounts = currentBalances.filter(b => b.class === 'revenue');
-      const expenseAccounts = currentBalances.filter(b => b.class === 'expense');
+      const revenueAccounts = currentBalances.filter((b) => b.class === 'revenue');
+      const expenseAccounts = currentBalances.filter((b) => b.class === 'expense');
 
-      const revenue = revenueAccounts.reduce((sum, acc) => {
+      const revenue = revenueAccounts.reduce((sum: number, acc) => {
         const net = acc.credit - acc.debit;
         return sum + (acc.normalBalance === 'credit' ? net : -net);
       }, 0);
 
-      const expenses = expenseAccounts.reduce((sum, acc) => {
+      const expenses = expenseAccounts.reduce((sum: number, acc) => {
         const net = acc.debit - acc.credit;
         return sum + (acc.normalBalance === 'debit' ? net : -net);
       }, 0);
 
-      const revenueRows = revenueAccounts.map(acc => ({
+      const revenueRows = revenueAccounts.map((acc) => ({
         accountId: acc.accountId,
         code: acc.code,
         name: acc.name,
         amount: acc.normalBalance === 'credit' ? (acc.credit - acc.debit) : -(acc.credit - acc.debit),
       }));
 
-      const expenseRows = expenseAccounts.map(acc => ({
+      const expenseRows = expenseAccounts.map((acc) => ({
         accountId: acc.accountId,
         code: acc.code,
         name: acc.name,
@@ -215,11 +214,11 @@ export const reportsRouter = router({
       let comparison = null;
       if (compareBalances.length > 0) {
         const prevRevenue = compareBalances
-          .filter(b => b.class === 'revenue')
-          .reduce((sum, acc) => sum + (acc.normalBalance === 'credit' ? (acc.credit - acc.debit) : -(acc.credit - acc.debit)), 0);
+          .filter((b) => b.class === 'revenue')
+          .reduce((sum: number, acc) => sum + (acc.normalBalance === 'credit' ? (acc.credit - acc.debit) : -(acc.credit - acc.debit)), 0);
         const prevExpenses = compareBalances
-          .filter(b => b.class === 'expense')
-          .reduce((sum, acc) => sum + (acc.normalBalance === 'debit' ? (acc.debit - acc.credit) : -(acc.debit - acc.credit)), 0);
+          .filter((b) => b.class === 'expense')
+          .reduce((sum: number, acc) => sum + (acc.normalBalance === 'debit' ? (acc.debit - acc.credit) : -(acc.debit - acc.credit)), 0);
 
         comparison = {
           revenue: prevRevenue,
@@ -242,18 +241,28 @@ export const reportsRouter = router({
   // Balance Sheet
   balanceSheet: accountantProcedure
     .input(z.object({
-      asOfDate: z.string().transform(val => new Date(val)).optional(),
+      asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       accountingPeriodId: z.string().uuid().optional(),
-      compareAsOfDate: z.string().transform(val => new Date(val)).optional(),
+      compareAsOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      const asOfDate = input.asOfDate || new Date();
+      const asOfDate = input.asOfDate || new Date().toISOString().split('T')[0];
 
-      async function getBalances(toDate: Date, periodId?: string) {
-        let query = db
+      async function getBalances(toDate: string, periodId?: string) {
+        const conditions = [
+          eq(schema.journalEntries.companyId, ctx.companyId!),
+          eq(schema.journalEntries.isPosted, true),
+          lte(schema.journalEntries.postingDate, toDate),
+        ];
+
+        if (periodId) {
+          conditions.push(eq(schema.journalEntries.accountingPeriodId, periodId));
+        }
+
+        const results = await db
           .select({
             accountId: schema.journalLines.accountId,
             totalDebit: sum(schema.journalLines.debit).as('totalDebit'),
@@ -267,23 +276,14 @@ export const reportsRouter = router({
           .innerJoin(schema.journalEntries, eq(schema.journalLines.journalEntryId, schema.journalEntries.id))
           .innerJoin(schema.accounts, eq(schema.journalLines.accountId, schema.accounts.id))
           .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
-          .where(and(
-            eq(schema.journalEntries.companyId, ctx.companyId!),
-            eq(schema.journalEntries.isPosted, true),
-            lte(schema.journalEntries.postingDate, toDate),
-          ));
-
-        if (periodId) {
-          query = query.where(eq(schema.journalEntries.accountingPeriodId, periodId));
-        }
-
-        const results = await query.groupBy(
-          schema.journalLines.accountId,
-          schema.accounts.code,
-          schema.accounts.name,
-          schema.accountTypes.class,
-          schema.accountTypes.normalBalance
-        );
+          .where(and(...conditions))
+          .groupBy(
+            schema.journalLines.accountId,
+            schema.accounts.code,
+            schema.accounts.name,
+            schema.accountTypes.class,
+            schema.accountTypes.normalBalance
+          );
 
         return results.map(r => ({
           accountId: r.accountId,
@@ -301,7 +301,7 @@ export const reportsRouter = router({
         input.compareAsOfDate ? getBalances(input.compareAsOfDate) : Promise.resolve([]),
       ]);
 
-      const buildSection = (balances: typeof currentBalances, className: string) => {
+      const buildSection = (balances: { accountId: string; code: string; name: string; class: string; normalBalance: string; debit: number; credit: number }[], className: string) => {
         return balances
           .filter(b => b.class === className)
           .map(b => {
@@ -316,44 +316,40 @@ export const reportsRouter = router({
           });
       };
 
-      // Assets
-      const currentAssets = buildSection(currentBalances, 'asset').filter(a => 
-        ['1100', '1200', '1300'].some(prefix => a.code.startsWith(prefix))
+      const currentAssets = buildSection(currentBalances, 'asset').filter((a) => 
+        ['1100', '1200', '1300'].some((prefix) => a.code.startsWith(prefix))
       );
-      const fixedAssets = buildSection(currentBalances, 'asset').filter(a => 
-        ['1400', '1500', '1600', '1700', '1800', '1900'].some(prefix => a.code.startsWith(prefix))
+      const fixedAssets = buildSection(currentBalances, 'asset').filter((a) => 
+        ['1400', '1500', '1600', '1700', '1800', '1900'].some((prefix) => a.code.startsWith(prefix))
       );
-      const otherAssets = buildSection(currentBalances, 'asset').filter(a => 
-        !['1100', '1200', '1300', '1400', '1500', '1600', '1700', '1800', '1900'].some(prefix => a.code.startsWith(prefix))
-      );
-
-      // Liabilities
-      const currentLiabilities = buildSection(currentBalances, 'liability').filter(l => 
-        ['2100', '2200'].some(prefix => l.code.startsWith(prefix))
-      );
-      const longTermLiabilities = buildSection(currentBalances, 'liability').filter(l => 
-        !['2100', '2200'].some(prefix => l.code.startsWith(prefix))
+      const otherAssets = buildSection(currentBalances, 'asset').filter((a) => 
+        !['1100', '1200', '1300', '1400', '1500', '1600', '1700', '1800', '1900'].some((prefix) => a.code.startsWith(prefix))
       );
 
-      // Equity
+      const currentLiabilities = buildSection(currentBalances, 'liability').filter((l) => 
+        ['2100', '2200'].some((prefix) => l.code.startsWith(prefix))
+      );
+      const longTermLiabilities = buildSection(currentBalances, 'liability').filter((l) => 
+        !['2100', '2200'].some((prefix) => l.code.startsWith(prefix))
+      );
+
       const equity = buildSection(currentBalances, 'equity');
 
-      // Calculate totals
-      const totalAssets = [...currentAssets, ...fixedAssets, ...otherAssets].reduce((sum, a) => sum + a.balance, 0);
-      const totalLiabilities = [...currentLiabilities, ...longTermLiabilities].reduce((sum, l) => sum + l.balance, 0);
-      const totalEquity = equity.reduce((sum, e) => sum + e.balance, 0);
+      const totalAssets = [...currentAssets, ...fixedAssets, ...otherAssets].reduce((sum: number, a) => sum + a.balance, 0);
+      const totalLiabilities = [...currentLiabilities, ...longTermLiabilities].reduce((sum: number, l) => sum + l.balance, 0);
+      const totalEquity = equity.reduce((sum: number, e) => sum + e.balance, 0);
 
       let comparison = null;
       if (compareBalances.length > 0) {
-        const prevAssets = compareBalances.filter(b => b.class === 'asset').reduce((sum, b) => {
+        const prevAssets = compareBalances.filter((b) => b.class === 'asset').reduce((sum: number, b) => {
           const net = b.debit - b.credit;
           return sum + (b.normalBalance === 'debit' ? net : -net);
         }, 0);
-        const prevLiabilities = compareBalances.filter(b => b.class === 'liability').reduce((sum, b) => {
+        const prevLiabilities = compareBalances.filter((b) => b.class === 'liability').reduce((sum: number, b) => {
           const net = b.debit - b.credit;
           return sum + (b.normalBalance === 'credit' ? net : -net);
         }, 0);
-        const prevEquity = compareBalances.filter(b => b.class === 'equity').reduce((sum, b) => {
+        const prevEquity = compareBalances.filter((b) => b.class === 'equity').reduce((sum: number, b) => {
           const net = b.debit - b.credit;
           return sum + (b.normalBalance === 'credit' ? net : -net);
         }, 0);

@@ -5,6 +5,7 @@ import { getDb } from "@/server/db";
 import { schema } from "@/server/db/schema";
 import { eq, and } from "drizzle-orm";
 import { compare, hash } from "bcryptjs";
+import type { Session } from "next-auth";
 
 export const authConfig: NextAuthConfig = {
   pages: {
@@ -13,7 +14,7 @@ export const authConfig: NextAuthConfig = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
   },
   providers: [
     Credentials({
@@ -58,8 +59,8 @@ export const authConfig: NextAuthConfig = {
       return token;
     },
     async session({ session, token }) {
-      if (token.id) {
-        session.user = { ...session.user, id: token.id };
+      if (token.sub) {
+        session.user = { ...session.user, id: token.sub };
       }
       return session;
     },

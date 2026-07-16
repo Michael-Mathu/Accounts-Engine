@@ -10,7 +10,7 @@ export const paymentsRouter = router({
   applyToInvoices: accountantProcedure
     .input(z.object({
       customerId: z.string().uuid(),
-      paymentDate: z.string().transform(val => new Date(val)),
+      paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       amount: z.number().positive(),
       bankAccountId: z.string().uuid().optional(),
       applications: z.array(z.object({
@@ -22,7 +22,6 @@ export const paymentsRouter = router({
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      // Validate total applied amount equals payment amount
       const totalApplied = input.applications.reduce((sum: number, a: { amount: number }) => sum + a.amount, 0);
       if (Math.abs(totalApplied - input.amount) > 0.0001) {
         throw new TRPCError({ 
@@ -31,7 +30,6 @@ export const paymentsRouter = router({
         });
       }
 
-      // Validate customer
       const [customer] = await db
         .select()
         .from(schema.customers)
@@ -44,7 +42,6 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Customer not found' });
       }
 
-      // Validate invoices exist and belong to customer
       const invoiceIds = input.applications.map(a => a.invoiceId);
       const invoices = await db
         .select()
@@ -59,12 +56,10 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'One or more invoices not found' });
       }
 
-// Check amounts don't exceed invoice balances
-       for (const app of input.applications) {
-         const invoice = invoices.find((i: { id: string }) => i.id === app.invoiceId);
-         if (!invoice) continue;
+      for (const app of input.applications) {
+        const invoice = invoices.find((i: typeof schema.invoices.$inferSelect) => i.id === app.invoiceId);
+        if (!invoice) continue;
 
-        // Calculate remaining balance
         const paidApplications = await db
           .select({ total: sql<number>`sum(${schema.paymentApplications.appliedAmount})` })
           .from(schema.paymentApplications)
@@ -81,7 +76,6 @@ export const paymentsRouter = router({
         }
       }
 
-      // Get default journal and period
       const [journal] = await db
         .select()
         .from(schema.journals)
@@ -97,8 +91,8 @@ export const paymentsRouter = router({
         .where(and(
           eq(schema.fiscalYears.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          sql`${schema.accountingPeriods.startDate}::date <= ${input.paymentDate.toISOString().split('T')[0]}`,
-          sql`${schema.accountingPeriods.endDate}::date >= ${input.paymentDate.toISOString().split('T')[0]}`
+          sql`${schema.accountingPeriods.startDate}::date <= ${input.paymentDate}`,
+          sql`${schema.accountingPeriods.endDate}::date >= ${input.paymentDate}`
         ))
         .limit(1);
 
@@ -106,7 +100,6 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period for payment date' });
       }
 
-      // Get AR account
       const [arAccount] = await db
         .select()
         .from(schema.accounts)
@@ -122,52 +115,54 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Accounts Receivable account not configured' });
       }
 
-      // Get Cash/Bank account
-      const [cashAccount] = input.bankAccountId 
-        ? await db.select().from(schema.bankAccounts).where(eq(schema.bankAccounts.id, input.bankAccountId))
-        : await db
-            .select()
-            .from(schema.accounts)
-            .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
-            .where(and(
-              eq(schema.accounts.companyId, ctx.companyId!),
-              eq(schema.accountTypes.class, 'asset'),
-              eq(schema.accountTypes.name, 'Bank')
-            ))
-            .limit(1);
+      let cashAccountId: string | undefined;
+      if (input.bankAccountId) {
+        const [bankAcc] = await db.select().from(schema.bankAccounts).where(eq(schema.bankAccounts.id, input.bankAccountId));
+        cashAccountId = bankAcc?.id;
+      } else {
+        const [bankAcc] = await db
+          .select({ id: schema.accounts.id })
+          .from(schema.accounts)
+          .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
+          .where(and(
+            eq(schema.accounts.companyId, ctx.companyId!),
+            eq(schema.accountTypes.class, 'asset'),
+            eq(schema.accountTypes.name, 'Bank')
+          ))
+          .limit(1);
+        cashAccountId = bankAcc?.id;
+      }
 
-      if (!cashAccount) {
+      if (!cashAccountId) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cash/Bank account not configured' });
       }
 
-      // Create payment record
       const [payment] = await db
         .insert(schema.customerPayments)
         .values({
           companyId: ctx.companyId!,
           customerId: input.customerId,
           paymentDate: input.paymentDate,
-          amount: input.amount.toFixed(4),
+          amount: String(input.amount),
           bankAccountId: input.bankAccountId,
-          journalEntryId: null, // Will update after creating entry
+          journalEntryId: null,
         })
         .returning();
 
-      // Create payment applications
       const appInserts = input.applications.map(app => ({
         paymentId: payment.id,
         invoiceId: app.invoiceId,
-        appliedAmount: app.amount.toFixed(4),
+        appliedAmount: String(app.amount),
       }));
 
       await db.insert(schema.paymentApplications).values(appInserts);
 
-      // Create journal entry
       const [entry] = await db
         .insert(schema.journalEntries)
         .values({
-          journalId: journal.id,
-          accountingPeriodId: period.id,
+          companyId: ctx.companyId!,
+          journalId: journal!.id,
+          accountingPeriodId: (period as { accounting_periods: { id: string } }).accounting_periods.id,
           entryDate: input.paymentDate,
           postingDate: input.paymentDate,
           referenceNumber: `PAY-${payment.id.slice(0, 8)}`,
@@ -177,37 +172,31 @@ export const paymentsRouter = router({
         })
         .returning();
 
-      // Create journal lines
-      // Debit cash/bank
       await db.insert(schema.journalLines).values({
         journalEntryId: entry.id,
-        accountId: cashAccount.accounts?.id || cashAccount.id,
+        accountId: cashAccountId,
         description: `Payment from ${customer.name}`,
-        debit: input.amount.toFixed(4),
-        credit: '0.0000',
+        debit: String(input.amount),
+        credit: '0',
       });
 
-      // Credit AR
       await db.insert(schema.journalLines).values({
         journalEntryId: entry.id,
         accountId: arAccount.accounts.id,
         description: `Payment from ${customer.name}`,
-        debit: '0.0000',
-        credit: input.amount.toFixed(4),
+        debit: '0',
+        credit: String(input.amount),
       });
 
-      // Update payment with journal entry ID
       await db
         .update(schema.customerPayments)
         .set({ journalEntryId: entry.id })
         .where(eq(schema.customerPayments.id, payment.id));
 
-// Update invoice statuses
-       for (const app of input.applications) {
-         const invoice = invoices.find((i: { id: string }) => i.id === app.invoiceId);
-         if (!invoice) continue;
+      for (const app of input.applications) {
+        const invoice = invoices.find((i: typeof schema.invoices.$inferSelect) => i.id === app.invoiceId);
+        if (!invoice) continue;
 
-        // Recalculate total paid
         const paidApps = await db
           .select({ total: sql<number>`sum(${schema.paymentApplications.appliedAmount})` })
           .from(schema.paymentApplications)
@@ -229,7 +218,7 @@ export const paymentsRouter = router({
   applyToBills: accountantProcedure
     .input(z.object({
       vendorId: z.string().uuid(),
-      paymentDate: z.string().transform(val => new Date(val)),
+      paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       amount: z.number().positive(),
       bankAccountId: z.string().uuid().optional(),
       applications: z.array(z.object({
@@ -241,7 +230,6 @@ export const paymentsRouter = router({
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      // Validate total applied amount equals payment amount
       const totalApplied = input.applications.reduce((sum: number, a: { amount: number }) => sum + a.amount, 0);
       if (Math.abs(totalApplied - input.amount) > 0.0001) {
         throw new TRPCError({ 
@@ -250,7 +238,6 @@ export const paymentsRouter = router({
         });
       }
 
-      // Validate vendor
       const [vendor] = await db
         .select()
         .from(schema.vendors)
@@ -263,7 +250,6 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Vendor not found' });
       }
 
-      // Validate bills
       const billIds = input.applications.map(a => a.billId);
       const bills = await db
         .select()
@@ -278,10 +264,9 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'One or more bills not found' });
       }
 
-// Check amounts don't exceed bill balances
-       for (const app of input.applications) {
-         const bill = bills.find((b: { id: string }) => b.id === app.billId);
-         if (!bill) continue;
+      for (const app of input.applications) {
+        const bill = bills.find((b: typeof schema.bills.$inferSelect) => b.id === app.billId);
+        if (!bill) continue;
 
         const paidApps = await db
           .select({ total: sql<number>`sum(${schema.vendorPaymentApplications.appliedAmount})` })
@@ -299,8 +284,7 @@ export const paymentsRouter = router({
         }
       }
 
-// Get default journal and period
-       const [journal] = await db
+      const [journal] = await db
         .select()
         .from(schema.journals)
         .where(and(
@@ -315,8 +299,8 @@ export const paymentsRouter = router({
         .where(and(
           eq(schema.fiscalYears.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          sql`${schema.accountingPeriods.startDate}::date <= ${input.paymentDate.toISOString().split('T')[0]}`,
-          sql`${schema.accountingPeriods.endDate}::date >= ${input.paymentDate.toISOString().split('T')[0]}`
+          sql`${schema.accountingPeriods.startDate}::date <= ${input.paymentDate}`,
+          sql`${schema.accountingPeriods.endDate}::date >= ${input.paymentDate}`
         ))
         .limit(1);
 
@@ -324,7 +308,6 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period for payment date' });
       }
 
-      // Get AP account
       const [apAccount] = await db
         .select()
         .from(schema.accounts)
@@ -340,52 +323,54 @@ export const paymentsRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Accounts Payable account not configured' });
       }
 
-      // Get Cash/Bank account
-      const [cashAccount] = input.bankAccountId
-        ? await db.select().from(schema.bankAccounts).where(eq(schema.bankAccounts.id, input.bankAccountId))
-        : await db
-            .select()
-            .from(schema.accounts)
-            .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
-            .where(and(
-              eq(schema.accounts.companyId, ctx.companyId!),
-              eq(schema.accountTypes.class, 'asset'),
-              eq(schema.accountTypes.name, 'Bank')
-            ))
-            .limit(1);
+      let cashAccountId: string | undefined;
+      if (input.bankAccountId) {
+        const [bankAcc] = await db.select().from(schema.bankAccounts).where(eq(schema.bankAccounts.id, input.bankAccountId));
+        cashAccountId = bankAcc?.id;
+      } else {
+        const [bankAcc] = await db
+          .select({ id: schema.accounts.id })
+          .from(schema.accounts)
+          .innerJoin(schema.accountTypes, eq(schema.accounts.accountTypeId, schema.accountTypes.id))
+          .where(and(
+            eq(schema.accounts.companyId, ctx.companyId!),
+            eq(schema.accountTypes.class, 'asset'),
+            eq(schema.accountTypes.name, 'Bank')
+          ))
+          .limit(1);
+        cashAccountId = bankAcc?.id;
+      }
 
-      if (!cashAccount) {
+      if (!cashAccountId) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Cash/Bank account not configured' });
       }
 
-      // Create payment record
       const [payment] = await db
         .insert(schema.vendorPayments)
         .values({
           companyId: ctx.companyId!,
           vendorId: input.vendorId,
           paymentDate: input.paymentDate,
-          amount: input.amount.toFixed(4),
+          amount: String(input.amount),
           bankAccountId: input.bankAccountId,
           journalEntryId: null,
         })
         .returning();
 
-      // Create applications
       const appInserts = input.applications.map(app => ({
         paymentId: payment.id,
         billId: app.billId,
-        appliedAmount: app.amount.toFixed(4),
+        appliedAmount: String(app.amount),
       }));
 
       await db.insert(schema.vendorPaymentApplications).values(appInserts);
 
-      // Create journal entry
       const [entry] = await db
         .insert(schema.journalEntries)
         .values({
-          journalId: journal.id,
-          accountingPeriodId: period.id,
+          companyId: ctx.companyId!,
+          journalId: journal!.id,
+          accountingPeriodId: (period as { accounting_periods: { id: string } }).accounting_periods.id,
           entryDate: input.paymentDate,
           postingDate: input.paymentDate,
           referenceNumber: `PAY-${payment.id.slice(0, 8)}`,
@@ -395,35 +380,30 @@ export const paymentsRouter = router({
         })
         .returning();
 
-      // Create journal lines
-      // Credit cash/bank
       await db.insert(schema.journalLines).values({
         journalEntryId: entry.id,
-        accountId: cashAccount.accounts?.id || cashAccount.id,
+        accountId: cashAccountId,
         description: `Payment to ${vendor.name}`,
-        debit: '0.0000',
-        credit: input.amount.toFixed(4),
+        debit: '0',
+        credit: String(input.amount),
       });
 
-      // Debit AP
       await db.insert(schema.journalLines).values({
         journalEntryId: entry.id,
         accountId: apAccount.accounts.id,
         description: `Payment to ${vendor.name}`,
-        debit: input.amount.toFixed(4),
-        credit: '0.0000',
+        debit: String(input.amount),
+        credit: '0',
       });
 
-      // Update payment with journal entry ID
       await db
         .update(schema.vendorPayments)
         .set({ journalEntryId: entry.id })
         .where(eq(schema.vendorPayments.id, payment.id));
 
-// Update bill statuses
-       for (const app of input.applications) {
-         const bill = bills.find((b: { id: string }) => b.id === app.billId);
-         if (!bill) continue;
+      for (const app of input.applications) {
+        const bill = bills.find((b: typeof schema.bills.$inferSelect) => b.id === app.billId);
+        if (!bill) continue;
 
         const paidApps = await db
           .select({ total: sql<number>`sum(${schema.vendorPaymentApplications.appliedAmount})` })
@@ -448,8 +428,8 @@ export const paymentsRouter = router({
       page: z.number().int().positive().default(1),
       pageSize: z.number().int().positive().max(100).default(25),
       customerId: z.string().uuid().optional(),
-      fromDate: z.string().transform(val => new Date(val)).optional(),
-      toDate: z.string().transform(val => new Date(val)).optional(),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;
@@ -512,8 +492,8 @@ export const paymentsRouter = router({
       page: z.number().int().positive().default(1),
       pageSize: z.number().int().positive().max(100).default(25),
       vendorId: z.string().uuid().optional(),
-      fromDate: z.string().transform(val => new Date(val)).optional(),
-      toDate: z.string().transform(val => new Date(val)).optional(),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;

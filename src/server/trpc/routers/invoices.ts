@@ -6,13 +6,12 @@ import { TRPCError } from '@trpc/server';
 import { schema } from '@/server/db';
 
 export const invoicesRouter = router({
-  // Create invoice
   create: accountantProcedure
     .input(z.object({
       customerId: z.string().uuid(),
       invoiceNumber: z.string().min(1).max(50),
-      issueDate: z.string().transform(val => new Date(val)),
-      dueDate: z.string().transform(val => new Date(val)),
+      issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       lines: z.array(z.object({
         description: z.string().min(1),
         quantity: z.number().min(1).default(1),
@@ -25,7 +24,6 @@ export const invoicesRouter = router({
       const db = ctx.db;
       await ctx.setRLSContext();
 
-      // Validate customer
       const [customer] = await db
         .select()
         .from(schema.customers)
@@ -38,7 +36,6 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'NOT_FOUND', message: 'Customer not found' });
       }
 
-      // Validate revenue accounts
       const accountIds = input.lines.map(l => l.revenueAccountId);
       const accounts = await db
         .select({ id: schema.accounts.id, accountClass: schema.accountTypes.class })
@@ -53,11 +50,9 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'One or more revenue accounts not found' });
       }
 
-      // Calculate totals
       const subtotal = input.lines.reduce((sum, line) => sum + (line.quantity * line.unitPrice), 0);
       const total = subtotal + input.taxTotal;
 
-      // Check invoice number uniqueness
       const [existing] = await db
         .select()
         .from(schema.invoices)
@@ -70,7 +65,6 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'CONFLICT', message: 'Invoice number already exists' });
       }
 
-      // Get default journal and current open period
       const [journal] = await db
         .select()
         .from(schema.journals)
@@ -86,8 +80,8 @@ export const invoicesRouter = router({
         .where(and(
           eq(schema.fiscalYears.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          sql`${schema.accountingPeriods.startDate}::date <= ${input.issueDate.toISOString().split('T')[0]}`,
-          sql`${schema.accountingPeriods.endDate}::date >= ${input.issueDate.toISOString().split('T')[0]}`
+          sql`${schema.accountingPeriods.startDate}::date <= ${input.issueDate}`,
+          sql`${schema.accountingPeriods.endDate}::date >= ${input.issueDate}`
         ))
         .limit(1);
 
@@ -95,7 +89,6 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period for this date' });
       }
 
-      // Create invoice
       const [invoice] = await db
         .insert(schema.invoices)
         .values({
@@ -105,18 +98,17 @@ export const invoicesRouter = router({
           issueDate: input.issueDate,
           dueDate: input.dueDate,
           status: 'draft',
-          subtotal,
-          taxTotal: input.taxTotal,
-          total,
+          subtotal: String(subtotal),
+          taxTotal: String(input.taxTotal),
+          total: String(total),
         })
         .returning();
 
-      // Create invoice lines
       const linesToInsert = input.lines.map(line => ({
         invoiceId: invoice.id,
         description: line.description,
-        quantity: line.quantity,
-        unitPrice: line.unitPrice,
+        quantity: String(line.quantity),
+        unitPrice: String(line.unitPrice),
         revenueAccountId: line.revenueAccountId,
       }));
 
@@ -125,7 +117,6 @@ export const invoicesRouter = router({
       return invoice;
     }),
 
-  // Send invoice (change status to 'sent' and create journal entry)
   send: accountantProcedure
     .input(z.object({
       id: z.string().uuid(),
@@ -150,13 +141,11 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Can only send draft invoices' });
       }
 
-      // Get lines
       const lines = await db
         .select()
         .from(schema.invoiceLines)
         .where(eq(schema.invoiceLines.invoiceId, input.id));
 
-      // Get AR account
       const [arAccount] = await db
         .select()
         .from(schema.accounts)
@@ -172,7 +161,6 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'Accounts Receivable account not configured' });
       }
 
-      // Get default journal and period
       const [journal] = await db
         .select()
         .from(schema.journals)
@@ -188,8 +176,8 @@ export const invoicesRouter = router({
         .where(and(
           eq(schema.fiscalYears.companyId, ctx.companyId!),
           eq(schema.accountingPeriods.isClosed, false),
-          sql`${schema.accountingPeriods.startDate}::date <= ${invoice.issueDate.toISOString().split('T')[0]}`,
-          sql`${schema.accountingPeriods.endDate}::date >= ${invoice.issueDate.toISOString().split('T')[0]}`
+          sql`${schema.accountingPeriods.startDate}::date <= ${invoice.issueDate}`,
+          sql`${schema.accountingPeriods.endDate}::date >= ${invoice.issueDate}`
         ))
         .limit(1);
 
@@ -197,12 +185,12 @@ export const invoicesRouter = router({
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'No open accounting period' });
       }
 
-      // Create journal entry
       const [entry] = await db
         .insert(schema.journalEntries)
         .values({
-          journalId: journal.id,
-          accountingPeriodId: period.id,
+          companyId: ctx.companyId!,
+          journalId: journal!.id,
+          accountingPeriodId: (period as { accounting_periods: { id: string } }).accounting_periods.id,
           entryDate: invoice.issueDate,
           postingDate: invoice.issueDate,
           referenceNumber: invoice.invoiceNumber,
@@ -212,37 +200,34 @@ export const invoicesRouter = router({
         })
         .returning();
 
-const customer = await db
+      const [customer] = await db
         .select()
         .from(schema.customers)
         .where(eq(schema.customers.id, invoice.customerId));
 
       const entryLines = [];
 
-      // Debit AR
       entryLines.push({
         journalEntryId: entry.id,
         accountId: arAccount.accounts.id,
-        description: `Invoice ${invoice.invoiceNumber} - ${customer[0]?.name || invoice.customerId}`,
-        debit: invoice.total.toFixed(4),
-        credit: 0,
+        description: `Invoice ${invoice.invoiceNumber} - ${customer?.name || invoice.customerId}`,
+        debit: String(invoice.total),
+        credit: '0',
       });
 
-// Credit revenue accounts
-       for (const line of lines) {
-         const lineAmount = Number(line.quantity) * Number(line.unitPrice);
-         entryLines.push({
-           journalEntryId: entry.id,
-           accountId: line.revenueAccountId,
-           description: line.description,
-           debit: 0,
-           credit: lineAmount.toFixed(4),
-         });
-       }
+      for (const line of lines) {
+        const lineAmount = Number(line.quantity) * Number(line.unitPrice);
+        entryLines.push({
+          journalEntryId: entry.id,
+          accountId: line.revenueAccountId,
+          description: line.description,
+          debit: '0',
+          credit: String(lineAmount),
+        });
+      }
 
       await db.insert(schema.journalLines).values(entryLines);
 
-      // Update invoice with journal entry reference
       const [updated] = await db
         .update(schema.invoices)
         .set({ 
@@ -255,7 +240,6 @@ const customer = await db
       return updated;
     }),
 
-  // Void invoice
   void: adminProcedure
     .input(z.object({
       id: z.string().uuid(),
@@ -281,21 +265,20 @@ const customer = await db
       }
 
       if (invoice.journalEntryId) {
-        // Reverse the journal entry
         const [entry] = await db
           .select()
           .from(schema.journalEntries)
           .where(eq(schema.journalEntries.id, invoice.journalEntryId));
 
         if (entry && entry.isPosted) {
-          // Create reversal
           const [reversal] = await db
             .insert(schema.journalEntries)
             .values({
+              companyId: ctx.companyId!,
               journalId: entry.journalId,
               accountingPeriodId: entry.accountingPeriodId,
-              entryDate: new Date(),
-              postingDate: new Date(),
+              entryDate: new Date().toISOString().split('T')[0],
+              postingDate: new Date().toISOString().split('T')[0],
               referenceNumber: `REV-${invoice.invoiceNumber}`,
               description: `Void of Invoice ${invoice.invoiceNumber}`,
               isPosted: false,
@@ -304,19 +287,18 @@ const customer = await db
             })
             .returning();
 
-          // Get original lines and reverse them
           const originalLines = await db
             .select()
             .from(schema.journalLines)
             .where(eq(schema.journalLines.journalEntryId, entry.id));
 
-const reversedLines = originalLines.map((line: typeof schema.journalLines.$inferSelect) => ({
-             journalEntryId: reversal.id,
-             accountId: line.accountId,
-             description: line.description,
-             debit: line.credit,
-             credit: line.debit,
-           }));
+          const reversedLines = originalLines.map((line) => ({
+            journalEntryId: reversal.id,
+            accountId: line.accountId,
+            description: line.description,
+            debit: line.credit || '0',
+            credit: line.debit || '0',
+          }));
 
           await db.insert(schema.journalLines).values(reversedLines);
         }
@@ -337,8 +319,8 @@ const reversedLines = originalLines.map((line: typeof schema.journalLines.$infer
       pageSize: z.number().int().positive().max(100).default(25),
       status: z.enum(['draft', 'sent', 'partial', 'paid', 'void']).optional(),
       customerId: z.string().uuid().optional(),
-      fromDate: z.string().transform(val => new Date(val)).optional(),
-      toDate: z.string().transform(val => new Date(val)).optional(),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     }))
     .query(async ({ ctx, input }) => {
       const db = ctx.db;
@@ -353,10 +335,10 @@ const reversedLines = originalLines.map((line: typeof schema.journalLines.$infer
         conditions.push(eq(schema.invoices.customerId, input.customerId));
       }
       if (input.fromDate) {
-        conditions.push(gte(schema.invoices.issueDate, input.fromDate.toISOString().split('T')[0]));
+        conditions.push(gte(schema.invoices.issueDate, input.fromDate));
       }
       if (input.toDate) {
-        conditions.push(lte(schema.invoices.issueDate, input.toDate.toISOString().split('T')[0]));
+        conditions.push(lte(schema.invoices.issueDate, input.toDate));
       }
 
       const offset = (input.page - 1) * input.pageSize;
