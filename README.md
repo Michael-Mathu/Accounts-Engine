@@ -285,12 +285,15 @@ docker compose -f docker-compose.prod.yml up -d
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `AUTH_SECRET` | Yes | Auth.js encryption key |
+| `NEXTAUTH_SECRET` | Yes | Auth.js encryption key |
+| `AUTH_SECRET` | Yes | Alias for NEXTAUTH_SECRET (either works) |
 | `SENTRY_DSN` | No | Error monitoring |
 | `STRIPE_SECRET_KEY` | Hosted only | Payments |
 | `PLAID_CLIENT_ID` | For banking | Bank feeds |
 | `PLAID_SECRET` | For banking | Bank feeds |
 | `ANTHROPIC_API_KEY` | For AI | Receipt extraction |
-| `AWS_*` | For file uploads | S3 receipt storage |
+| `AWS_ACCESS_KEY_ID` | For file uploads | S3 receipt storage |
+| `AWS_SECRET_ACCESS_KEY` | For file uploads | S3 receipt storage |
+| `AWS_S3_BUCKET` | For file uploads | S3 bucket name |
 | `INNGEST_EVENT_KEY` | For jobs | Background job runner |
-| `SELF_HOSTED` | Optional | Bypass billing gates |
+| `SELF_HOSTED` | Optional | Bypass billing gates (set to `true`) |

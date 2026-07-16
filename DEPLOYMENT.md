@@ -1,32 +1,49 @@
-# Accounting Engine
+# Accounting Engine - Deployment Guide
 
-Open-source QuickBooks alternative for freelancers/SMEs.
+## Environment Variables
 
-## Deployment
+### Required
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `AUTH_SECRET` | NextAuth secret key (generate: `openssl rand -base64 32`) |
 
-### Environment Variables
+### Optional (Self-hosted mode)
+| Variable | Description |
+|----------|-------------|
+| `SELF_HOSTED` | Set to `true` to bypass credit system |
+| `PLAID_CLIENT_ID` | Plaid API client ID |
+| `PLAID_SECRET` | Plaid API secret |
+| `ANTHROPIC_API_KEY` | AI receipt extraction |
+| `AWS_ACCESS_KEY_ID` | S3 credentials |
+| `AWS_SECRET_ACCESS_KEY` | S3 credentials |
+| `AWS_S3_BUCKET` | S3 bucket name |
 
-Required:
-- `DATABASE_URL` - PostgreSQL connection string
-- `NEXTAUTH_SECRET` - NextAuth secret key
-- `NEXTAUTH_URL` - Application URL
+### Optional (Hosted mode)
+| Variable | Description |
+|----------|-------------|
+| `STRIPE_SECRET_KEY` | Stripe payments |
+| `STRIPE_WEBHOOK_SECRET` | Webhook verification |
+| `SENTRY_DSN` | Error monitoring |
+| `INNGEST_EVENT_KEY` | Background jobs |
 
-Optional:
-- `SENTRY_DSN` - Sentry error tracking
-- `STRIPE_SECRET_KEY` - Stripe payments
-- `STRIPE_WEBHOOK_SECRET` - Stripe webhook signing
-- `PLAID_CLIENT_ID` / `PLAID_SECRET` - Plaid integration
-- `ANTHROPIC_API_KEY` - AI features
+## Production Setup
 
-### Production Setup
+```bash
+# 1. Set environment variables
+cp .env.example .env.production
 
-1. Set environment variables
-2. Run migrations: `npm run db:migrate`
-3. Seed database: `npm run db:seed`
-4. Build: `npm run build`
-5. Start: `npm start`
+# 2. Run migrations
+npm run db:migrate
 
-### Docker Deployment
+# 3. Build
+npm run build
+
+# 4. Start
+npm start
+```
+
+## Docker Deployment
 
 ```dockerfile
 FROM node:20-alpine AS builder
@@ -45,7 +62,79 @@ EXPOSE 3000
 CMD ["npm", "start"]
 ```
 
+## Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: accounting
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/accounting
+      AUTH_SECRET: ${AUTH_SECRET}
+    ports: ["3000:3000"]
+    depends_on: [db]
+```
+
+## Database Migrations
+
+Migrations are in `src/server/db/migrations/`. Run:
+
+```bash
+# Generate migration
+npx drizzle-kit generate
+
+# Apply migration
+npx drizzle-kit migrate
+
+# Studio (GUI)
+npx drizzle-kit studio
+```
+
+## Background Jobs
+
+Inngest runs automatically when `SELF_HOSTED=true` or when `INNGEST_EVENT_KEY` is set.
+
+Jobs:
+- `bankSyncJob` - Daily bank transaction sync
+- `receiptOcrJob` - On receipt upload
+- `depreciationPostingJob` - Monthly depreciation
+- `creditResetJob` - Monthly credit reset (hosted)
+
+## Health Checks
+
+```bash
+# API health
+curl /api/trpc/accounts.list
+
+# Database connection
+curl /api/trpc/reports.trialBalance
+```
+
 ## Testing
 
-- Unit tests: `npm run test`
-- E2E tests: `npm run test:e2e`
+```bash
+# Unit tests
+npm run test
+
+# Watch mode
+npm run test:watch
+
+# E2E tests
+npm run test:e2e
+
+# Type check
+npm run typecheck
+
+# Lint
+npm run lint
+```
